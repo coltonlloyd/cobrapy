@@ -12,6 +12,7 @@ from warnings import warn
 
 from six import iteritems, iterkeys, string_types
 from future.utils import raise_from, raise_with_traceback
+from sympy import Basic
 
 from cobra.exceptions import OptimizationError
 from cobra.core.gene import Gene, ast2str, parse_gpr, eval_gpr
@@ -216,7 +217,9 @@ class Reaction(Object):
     @lower_bound.setter
     @resettable
     def lower_bound(self, value):
-        if self.upper_bound < value:
+        if isinstance(value, Basic) or isinstance(self.upper_bound, Basic):
+            pass
+        elif self.upper_bound < value:
             self.upper_bound = value
 
         self._lower_bound = value
@@ -239,7 +242,9 @@ class Reaction(Object):
     @upper_bound.setter
     @resettable
     def upper_bound(self, value):
-        if self.lower_bound > value:
+        if isinstance(value, Basic) or isinstance(self.lower_bound, Basic):
+            pass
+        elif self.lower_bound > value:
             self.lower_bound = value
 
         self._upper_bound = value
@@ -666,12 +671,14 @@ class Reaction(Object):
     @property
     def reactants(self):
         """Return a list of reactants for the reaction."""
-        return [k for k, v in iteritems(self._metabolites) if v < 0]
+        return [k for k, v in iteritems(self._metabolites)
+                if not _is_positive(v)]
 
     @property
     def products(self):
         """Return a list of products for the reaction"""
-        return [k for k, v in iteritems(self._metabolites) if v >= 0]
+        return [k for k, v in iteritems(self._metabolites)
+                if _is_positive(v)]
 
     def get_coefficient(self, metabolite_id):
         """
@@ -1083,18 +1090,41 @@ def separate_forward_and_reverse_bounds(lower_bound, upper_bound):
     (returns positive ranges) and flipped for usage with forward and reverse
     reactions bounds
 
+    If the lower or upper bound contains a sympy.Symbol, the relative
+    magnitude of the bounds may not be able to be determined based on the
+    symbol assumptions. In that case, a value (2) is substituted before sorting
+    then replaced with the original expression containing a sympy.Symbol.
+
     Parameters
     ----------
-    lower_bound : float
+    lower_bound : float or sympy.Symbol
         The lower flux bound
-    upper_bound : float
+    upper_bound : float or sympy.Symbol
         The upper flux bound
     """
+
+    # If lower or upper bound contains sympy.Symbol, store value for later
+    replace_dict = {}
+    if isinstance(lower_bound, Basic):
+        old_lower_bound = lower_bound
+        # Replace symbol with value (2)
+        lower_bound = \
+            old_lower_bound.subs(old_lower_bound.free_symbols.pop(), 2.)
+        replace_dict[lower_bound] = old_lower_bound
+    if isinstance(upper_bound, Basic):
+        old_upper_bound = upper_bound
+        # Replace symbol with value (2)
+        upper_bound = \
+            old_upper_bound.subs(old_upper_bound.free_symbols.pop(), 2.)
+        replace_dict[upper_bound] = old_upper_bound
 
     assert lower_bound <= upper_bound, "lower bound is greater than upper"
 
     bounds_list = [0, 0, lower_bound, upper_bound]
     bounds_list.sort()
+
+    # Return bounds to original sympy expressions
+    bounds_list = [replace_dict.get(i, i) for i in bounds_list]
 
     return -bounds_list[1], -bounds_list[0], bounds_list[2], bounds_list[3]
 
@@ -1136,3 +1166,24 @@ def update_forward_and_reverse_bounds(reaction, direction='both'):
 
     except AttributeError:
         pass
+
+
+def _is_positive(value):
+    """Determine sign of value. Returns True is positive or zero and False if
+    negative.
+
+    If value includes sympy symbol and sign cannot
+    be determined based on the symbol's assumptions, function returns True.
+
+    Parameters
+    ----------
+    value : float or sympy.Symbol
+
+    """
+    try:
+        if value >= 0.:
+            return True
+        else:
+            return False
+    except TypeError:
+        return True

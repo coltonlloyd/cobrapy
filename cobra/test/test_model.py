@@ -8,7 +8,7 @@ import numpy
 from math import isnan
 import pytest
 import pandas as pd
-from sympy import S
+from sympy import S, Symbol
 
 import cobra.util.solver as su
 from cobra.core import Metabolite, Model, Reaction
@@ -298,6 +298,28 @@ class TestReactions:
 
     def test_repr_html_(self, model):
         assert '<table>' in model.reactions[0]._repr_html_()
+
+    def test_symbolic_reaction_bounds(self, model):
+        reaction = model.reactions.TPI
+        mu = Symbol('mu', positive=True)
+
+        reaction.upper_bound = 1000.
+        reaction.lower_bound = mu
+        assert reaction.lower_bound == mu
+
+        reaction.lower_bound = 4.
+        reaction.upper_bound = mu
+        assert reaction.upper_bound == mu
+
+    def test_symbolic_coefficient(self, model):
+        reaction = model.reactions.TPI
+        mu = Symbol('mu', positive=True)
+
+        # Sign of mu - 5 is ambiguous
+        reaction.add_metabolites({'dhap_c': mu - 5.}, combine=False)
+
+        # Assume reactant if ambiguous
+        assert 'dhap_c' in reaction.reactants
 
 
 class TestCobraMetabolites:
